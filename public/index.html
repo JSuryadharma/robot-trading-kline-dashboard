@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Robot Trading Dashboard</title>
+    <link rel="stylesheet" href="/styles.css?v=mobile-tv-retry-actions-20260716">
+  </head>
+  <body>
+    <main id="loginView" class="login-shell hidden">
+      <section class="login-panel">
+        <div>
+          <div class="login-brand">
+            <span class="brand-logo" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 18V6M4 18h16M8 15v-4M12 15V8M16 15v-2M7 7h10"/></svg>
+            </span>
+            <div>
+              <p class="eyebrow">Robot Trading</p>
+              <h1>K-Line Dashboard</h1>
+            </div>
+          </div>
+        </div>
+        <form id="loginForm" class="login-form">
+          <label>
+            <span>Username</span>
+            <input id="username" name="username" autocomplete="username" required>
+          </label>
+          <label>
+            <span>Password</span>
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit" class="primary-button">Login</button>
+          <p id="loginError" class="form-error"></p>
+        </form>
+      </section>
+    </main>
+
+    <main id="appView" class="app-shell hidden">
+      <header class="topbar">
+        <div class="brand-block">
+          <span class="status-dot" id="connectionDot"></span>
+          <span class="brand-logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 18V6M4 18h16M8 15v-4M12 15V8M16 15v-2M7 7h10"/></svg>
+          </span>
+          <div>
+            <p class="eyebrow">Robot Trading</p>
+            <h1 id="symbolTitle">TradingView K-Line Monitor</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <select id="activeSymbolSelect" class="symbol-select" aria-label="Active stock"></select>
+          <button id="refreshButton" class="icon-button" type="button" aria-label="Refresh data" title="Refresh data">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-15.5-3M4 4v4h4M4 13a8.1 8.1 0 0 0 15.5 3M20 20v-4h-4"/></svg>
+          </button>
+          <button id="bellButton" class="icon-button bell-button" type="button" aria-label="Notifications" title="Notifications">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+            <span id="bellCount" class="bell-count hidden">0</span>
+          </button>
+          <button id="logoutButton" class="text-button" type="button">Logout</button>
+        </div>
+      </header>
+
+      <section class="view-toolbar">
+        <div>
+          <span id="activeViewEyebrow" class="view-eyebrow">Summary</span>
+          <h2 id="activeViewTitle">Summary Page</h2>
+          <p id="activeViewDescription">Ringkasan saham, parameter utama, dan monitor K-Line.</p>
+        </div>
+      </section>
+
+      <section class="summary-grid">
+        <article class="metric-card verdict-card">
+          <span class="metric-label">Verdict</span>
+          <strong id="verdictValue">--</strong>
+          <small id="verdictSub">Waiting for data</small>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Current Price</span>
+          <strong id="priceValue">--</strong>
+          <small id="priceSub">Close: --</small>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">3M Rank</span>
+          <strong id="rankValue">--</strong>
+          <small id="rankSub">Performance: --</small>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Balance</span>
+          <strong id="balanceValue">--</strong>
+          <small id="equityValue">Equity: --</small>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Position</span>
+          <strong id="positionValue">--</strong>
+          <small id="pnlValue">P/L: --</small>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel market-summary-panel tradingview-panel" data-page="summary" data-no-collapse="true">
+          <div class="panel-heading">
+            <div>
+              <h2>TradingView K-Line Monitor</h2>
+              <p id="sourceSub" class="muted">--</p>
+            </div>
+            <span id="latestDateBadge" class="badge">--</span>
+          </div>
+          <div id="tradingViewShell" class="tradingview-shell">
+            <div id="tradingViewWidget" class="tradingview-widget-container"></div>
+          </div>
+          <section class="history-summary-block" aria-labelledby="historySummaryTitle">
+            <div class="history-summary-heading">
+              <h2 id="historySummaryTitle">Price History Summary</h2>
+              <span id="historyWindow" class="badge">--</span>
+            </div>
+            <div id="historySummaryGrid" class="history-summary-rail" aria-label="Price history summary"></div>
+          </section>
+        </article>
+
+        <article class="panel timeframe-panel" data-page="ai">
+          <div class="panel-heading">
+            <div>
+              <h2>Timeframe Bias</h2>
+              <p class="muted">Verdict ringkas berdasarkan kelompok indikator.</p>
+            </div>
+            <select id="timeframeSelect" class="compact-select" aria-label="AI timeframe">
+              <option value="intraday">Intraday</option>
+              <option value="swing" selected>Swing</option>
+              <option value="position">Position</option>
+            </select>
+          </div>
+          <div id="timeframeVerdict" class="timeframe-verdict"></div>
+        </article>
+
+        <article class="panel decision-panel" data-page="ai">
+          <div class="panel-heading">
+            <h2>Decision Parameters</h2>
+            <span id="scoreBadge" class="badge">Score --</span>
+          </div>
+          <div id="parameterList" class="parameter-list"></div>
+        </article>
+
+        <article class="panel wide-panel ranking-panel" data-page="notifications">
+          <div class="panel-heading">
+            <h2>Top 10 Performers</h2>
+            <span id="rankingBadge" class="badge">3M</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Stock</th>
+                  <th>Close</th>
+                  <th>3M</th>
+                  <th>High</th>
+                  <th>Low</th>
+                  <th>Volume 20D</th>
+                </tr>
+              </thead>
+              <tbody id="rankingTable"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel indicator-panel" data-page="ai">
+          <div class="panel-heading">
+            <h2>Indicator Output</h2>
+            <span id="indicatorDate" class="badge">--</span>
+          </div>
+          <div id="indicatorGrid" class="indicator-grid"></div>
+        </article>
+
+        <article class="panel position-overview-panel" data-page="position">
+          <div class="panel-heading">
+            <h2>Position Overview</h2>
+            <span id="positionModeBadge" class="badge">Paper</span>
+          </div>
+          <div id="positionOverviewGrid" class="mini-grid"></div>
+          <div id="tradeGateSummary" class="trade-gate-summary"></div>
+          <div class="trade-actions">
+            <button id="autoTradeButton" type="button" class="primary-button">Trigger auto trade</button>
+            <button id="manualTradeButton" type="button" class="text-button">Trade verdict</button>
+          </div>
+          <p id="tradeStatus" class="form-note"></p>
+        </article>
+
+        <article class="panel settings-panel" data-page="position">
+          <div class="panel-heading">
+            <h2>Auto Trade Rules</h2>
+            <button id="criticalReviewButton" type="button" class="text-button">Run check</button>
+          </div>
+          <form id="settingsForm" class="settings-form auto-rules-form">
+            <div class="rule-status-grid">
+              <label class="rule-switch">
+                <input id="autoTradeEnabled" type="checkbox">
+                <span class="switch-track" aria-hidden="true"></span>
+                <span>
+                  <strong>Auto trade</strong>
+                  <small>Allow paper orders when gate passes</small>
+                </span>
+              </label>
+              <label class="rule-switch">
+                <input id="runOnRefresh" type="checkbox">
+                <span class="switch-track" aria-hidden="true"></span>
+                <span>
+                  <strong>Trade on refresh</strong>
+                  <small>Use the latest verdict automatically</small>
+                </span>
+              </label>
+            </div>
+
+            <div class="rule-presets" aria-label="Auto trade presets">
+              <button type="button" data-rule-preset="conservative">Conservative</button>
+              <button type="button" data-rule-preset="balanced">Balanced</button>
+              <button type="button" data-rule-preset="active">Active</button>
+            </div>
+
+            <div class="rule-range-grid">
+              <label class="range-control">
+                <span>
+                  <strong>Min score</strong>
+                  <b id="minScoreLabel">--</b>
+                </span>
+                <input id="minScoreToAutoTrade" type="range" min="0" max="100" step="1">
+                <small>Higher means fewer but stricter entries.</small>
+              </label>
+              <label class="range-control">
+                <span>
+                  <strong>Take profit</strong>
+                  <b id="takeProfitLabel">--</b>
+                </span>
+                <input id="takeProfitPct" type="range" min="0.5" max="40" step="0.5">
+                <small>SELL can trigger after this profit margin.</small>
+              </label>
+            </div>
+
+            <label class="field-card">
+              <span>Min confidence</span>
+              <select id="minConfidence">
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <div id="rulePreview" class="rule-preview"></div>
+
+            <details class="rule-section" open>
+              <summary>Schedule</summary>
+              <label class="rule-switch compact">
+                <input id="cronEnabled" type="checkbox">
+                <span class="switch-track" aria-hidden="true"></span>
+                <span>
+                  <strong>Cron review</strong>
+                  <small>Run AI checks at selected market hours</small>
+                </span>
+              </label>
+              <input id="cronTimes" type="hidden">
+              <div class="check-grid" aria-label="Daily cron times">
+                <label class="check-chip">
+                  <input type="checkbox" value="09:00" data-cron-time>
+                  <span>09:00</span>
+                </label>
+                <label class="check-chip">
+                  <input type="checkbox" value="11:00" data-cron-time>
+                  <span>11:00</span>
+                </label>
+                <label class="check-chip">
+                  <input type="checkbox" value="13:00" data-cron-time>
+                  <span>13:00</span>
+                </label>
+                <label class="check-chip">
+                  <input type="checkbox" value="15:30" data-cron-time>
+                  <span>15:30</span>
+                </label>
+              </div>
+            </details>
+
+            <details class="rule-section">
+              <summary>Stocks</summary>
+              <label class="field-card">
+                <span>Universe mode</span>
+                <select id="symbolsMode">
+                  <option value="top10">Top 10 ranking</option>
+                  <option value="selected">Selected watchlist</option>
+                </select>
+              </label>
+              <label class="field-card">
+                <span>Watchlist</span>
+                <select id="selectedSymbols" multiple size="5"></select>
+              </label>
+              <label class="field-card">
+                <span>Ranking universe</span>
+                <select id="rankingUniverse" multiple size="6"></select>
+              </label>
+            </details>
+
+            <details class="rule-section">
+              <summary>Alerts</summary>
+              <label class="rule-switch compact">
+                <input id="emailEnabled" type="checkbox">
+                <span class="switch-track" aria-hidden="true"></span>
+                <span>
+                  <strong>Gmail alerts</strong>
+                  <small>Send a brief when cron produces an update</small>
+                </span>
+              </label>
+              <label class="field-card">
+                <span>Gmail recipient</span>
+                <input id="gmailTo" type="email">
+              </label>
+              <label class="field-card">
+                <span>Sender Gmail</span>
+                <input id="gmailUser" type="email">
+              </label>
+              <label class="field-card">
+                <span>App password</span>
+                <input id="gmailAppPassword" type="password" autocomplete="new-password">
+              </label>
+            </details>
+
+            <div class="rule-footer">
+              <button type="submit" class="primary-button">Save rules</button>
+              <p id="settingsStatus" class="form-note"></p>
+            </div>
+          </form>
+        </article>
+
+        <article class="panel ai-panel" data-page="ai">
+          <div class="panel-heading">
+            <h2>AI Decisions</h2>
+            <span id="aiJobBadge" class="badge">Last update</span>
+          </div>
+          <div id="newsWindowSummary" class="news-window-summary"></div>
+          <div id="aiReports" class="compact-list"></div>
+        </article>
+
+        <article class="panel signal-panel" data-page="ai">
+          <div class="panel-heading">
+            <h2>Signal Significance</h2>
+            <span id="calibrationBadge" class="badge">--</span>
+          </div>
+          <canvas id="signalChart" class="signal-chart" width="640" height="260" aria-label="Technical signal chart"></canvas>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Signal</th>
+                  <th>Side</th>
+                  <th>Hits</th>
+                  <th>Win</th>
+                  <th>Return</th>
+                  <th>Weight</th>
+                </tr>
+              </thead>
+              <tbody id="significanceTable"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel wide-panel ledger-panel" data-page="position">
+          <div class="panel-heading">
+            <h2>Auto Trading Ledger</h2>
+            <span id="ledgerBadge" class="badge">Paper</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Symbol</th>
+                  <th>Action</th>
+                  <th>Qty</th>
+                  <th>Price</th>
+                  <th>Gross</th>
+                  <th>Profit</th>
+                </tr>
+              </thead>
+              <tbody id="transactionTable"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article id="notificationPanel" class="panel notifications-panel" data-page="notifications">
+          <div class="panel-heading">
+            <h2>Notifikasi Aplikasi</h2>
+            <button id="markReadButton" type="button" class="text-button">Mark read</button>
+          </div>
+          <div id="notificationList" class="compact-list"></div>
+        </article>
+      </section>
+
+      <nav class="floating-menu" aria-label="Dashboard navigation">
+        <button type="button" class="floating-menu-item" data-view-target="summary" aria-label="Summary page">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4v9ZM14 20h6V4h-6v16ZM4 20h6v-3H4v3Z"/></svg>
+          <span>Summary</span>
+        </button>
+        <button type="button" class="floating-menu-item" data-view-target="ai" aria-label="AI Decision page">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3M12 18v3M4.9 7.1 7 9.2M17 14.8l2.1 2.1M3 12h3M18 12h3M4.9 16.9 7 14.8M17 9.2l2.1-2.1M9 9h6v6H9z"/></svg>
+          <span>AI</span>
+        </button>
+        <button type="button" class="floating-menu-item" data-view-target="position" aria-label="Position page">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-3M7 7h10"/></svg>
+          <span>Position</span>
+        </button>
+        <button type="button" class="floating-menu-item" data-view-target="notifications" aria-label="Notification page">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+          <span>Notif</span>
+        </button>
+      </nav>
+    </main>
+
+    <script src="/app.js?v=mobile-tv-retry-actions-20260716" type="module"></script>
+  </body>
+</html>

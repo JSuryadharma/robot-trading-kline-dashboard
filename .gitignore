@@ -1,0 +1,12 @@
+.DS_Store
+.env
+node_modules/
+npm-debug.log*
+
+# Runtime application state and generated outputs
+data/*.json
+outputs/
+work/
+
+# Keep the data directory without committing sessions/cache/state
+!data/.gitkeep
