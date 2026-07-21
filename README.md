@@ -31,6 +31,16 @@ The dashboard includes a TradingView K-line monitor for the active symbol and ke
 
 The UI can select and edit a watchlist plus a ranking universe. Defaults include `BBCA.JK`, `BBRI.JK`, `BMRI.JK`, `ANTM.JK`, and other IDX symbols. The server ranks the universe by 3-month performance and exposes the top 10.
 
+## Research Back Trace
+
+The Summary page includes a collapsible research section for walk-forward backtesting. It can compare 3-month, 6-month, and 1-year daily K-Line windows, with a strict maximum of one year. The automatic duration mode uses a 70% training period and a 30% out-of-sample validation period.
+
+Historical news comes from a cached Google News RSS archive and is scored in a trailing 3-day window for each candle. Research signals execute at the next session open and include a 0.4% round-trip cost. The report shows trade win rate, return, drawdown, parameter-level directional win rates, and current-versus-recommended weights.
+
+Validated tuning can update the live parameter weights, minimum score, and take-profit value. Adjustments are applied only when the validation sample and improvement clear the guard rules; otherwise the recommendation remains research-only.
+
+The Research accordion also supports a dedicated **Day Trade / 15m** mode. It requests up to 60 calendar days of real intraday candles, compares 20/40/maximum-session windows, enters on the next candle, and forces every position to close within the same IDX session. Defaults use a 1.8% target, 1.2% stop, eight-bar maximum hold, and 0.4% round-trip cost. Historical headlines are lagged by one day because archived feeds do not provide reliable intraday publication timestamps.
+
 ## Notifications
 
 Application notifications are stored in `data/notifications.json` and pushed to the bell icon over websocket. Telegram messages are sent when these environment variables are present:

@@ -12,9 +12,9 @@ export function buildAdvisorPrompt(snapshot, decision, portfolio, checkLabel) {
     `Momentum: RSI14=${latest.rsi14}, StochK=${latest.stochK}, StochD=${latest.stochD}, MACD histogram=${latest.macdHistogram}.`,
     `Risk: ATR%=${latest.atrPct}, Bollinger lower=${latest.bbLower}, upper=${latest.bbUpper}.`,
     `Portfolio: balance=${portfolio.balance}, position=${position ? `${position.quantity} @ ${position.averagePrice}` : 'none'}.`,
-    `Robot verdict: ${decision.verdict}, action=${decision.action}, score=${decision.score}, confidence=${decision.confidence}.`,
+    `Robot verdict: ${decision.verdict}, action=${decision.action}, final score=${decision.score}, technical score=${decision.technicalScore}, applied news score=${decision.newsScore}, confidence=${decision.confidence}.`,
     `Combined confidence percentage: ${decision.confidencePercentage ?? 'n/a'}%.`,
-    news ? `Today's AI news verdict: ${news.verdict}, news score=${news.score}, news confidence=${news.confidencePercentage}%, summary=${news.summary}.` : 'Today news verdict: unavailable.',
+    news ? `Today's AI news verdict: ${news.verdict}, raw news score=${news.score}, applied news score=${decision.newsScore}, news confidence=${news.confidencePercentage}%, summary=${news.summary}.` : 'Today news verdict: unavailable.',
     `Parameter summary: ${decision.parameters.map((item) => `${item.name}=${item.score} (${item.bias})`).join('; ')}.`,
     'Return a short operator note with risk, reason, and whether the robot action should remain unchanged.'
   ].join('\n');

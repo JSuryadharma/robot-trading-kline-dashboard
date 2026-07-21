@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { readJson, writeJson } from './storage.js';
 import { defaultUniverse, normalizeStockList, stockFromInput } from './symbols.js';
+import { defaultParameterWeights, normalizeParameterWeights } from './decisionEngine.js';
 
 const SETTINGS_FILE = 'settings.json';
 
@@ -21,7 +22,18 @@ const defaultSettings = {
     runOnRefresh: false,
     minScore: 58,
     minConfidence: 'medium',
-    takeProfitPct: 7
+    takeProfitPct: 7,
+    stopLossPct: 4.5,
+    parameterWeights: defaultParameterWeights
+  },
+  dayTrade: {
+    interval: '15m',
+    lookbackDays: 60,
+    minScore: 44,
+    takeProfitPct: 1.8,
+    stopLossPct: 1.2,
+    maxHoldBars: 8,
+    parameterWeights: defaultParameterWeights
   },
   email: {
     enabled: false,
@@ -50,6 +62,10 @@ export async function updateSettings(input) {
     autoTrade: {
       ...current.autoTrade,
       ...(input.autoTrade || {})
+    },
+    dayTrade: {
+      ...current.dayTrade,
+      ...(input.dayTrade || {})
     },
     email: {
       ...current.email,
@@ -104,13 +120,24 @@ function normalizeSettings(settings) {
       runOnRefresh: Boolean(settings.autoTrade?.runOnRefresh),
       minScore: boundedNumber(settings.autoTrade?.minScore, 0, 100, 58),
       minConfidence: normalizeConfidence(settings.autoTrade?.minConfidence),
-      takeProfitPct: boundedNumber(settings.autoTrade?.takeProfitPct, 0.5, 40, 7)
+      takeProfitPct: boundedNumber(settings.autoTrade?.takeProfitPct, 0.5, 40, 7),
+      stopLossPct: boundedNumber(settings.autoTrade?.stopLossPct, 0.5, 15, 4.5),
+      parameterWeights: normalizeParameterWeights(settings.autoTrade?.parameterWeights)
+    },
+    dayTrade: {
+      interval: '15m',
+      lookbackDays: boundedNumber(settings.dayTrade?.lookbackDays, 20, 60, 60),
+      minScore: boundedNumber(settings.dayTrade?.minScore, 38, 70, 44),
+      takeProfitPct: boundedNumber(settings.dayTrade?.takeProfitPct, 0.8, 4, 1.8),
+      stopLossPct: boundedNumber(settings.dayTrade?.stopLossPct, 0.6, 3, 1.2),
+      maxHoldBars: boundedNumber(settings.dayTrade?.maxHoldBars, 3, 16, 8),
+      parameterWeights: normalizeParameterWeights(settings.dayTrade?.parameterWeights)
     },
     email: {
       enabled: Boolean(settings.email?.enabled),
-      gmailUser: String(settings.email?.gmailUser || ''),
+      gmailUser: String(settings.email?.gmailUser || config.email.gmailUser || ''),
       gmailAppPassword: String(settings.email?.gmailAppPassword || ''),
-      gmailTo: String(settings.email?.gmailTo || '')
+      gmailTo: String(settings.email?.gmailTo || config.email.gmailTo || '')
     }
   };
 }

@@ -10,7 +10,11 @@ export const signalDefinitions = {
   macd_bull_cross: { label: 'MACD crossed above signal', direction: 'bullish' },
   macd_bear_cross: { label: 'MACD crossed below signal', direction: 'bearish' },
   lower_band_reversal: { label: 'Reversal from lower Bollinger Band', direction: 'bullish' },
-  upper_band_rejection: { label: 'Rejection near upper Bollinger Band', direction: 'bearish' }
+  upper_band_rejection: { label: 'Rejection near upper Bollinger Band', direction: 'bearish' },
+  bullish_bos: { label: 'Bullish break of structure', direction: 'bullish' },
+  bearish_bos: { label: 'Bearish break of structure', direction: 'bearish' },
+  bullish_trend_change: { label: 'Bullish trend change', direction: 'bullish' },
+  bearish_trend_change: { label: 'Bearish trend change', direction: 'bearish' }
 };
 
 export function enrichCandles(candles) {
@@ -94,6 +98,27 @@ export function detectSignals(candles, index = candles.length - 1) {
   }
   if ([previous.close, previous.bbUpper, current.close, current.bbUpper].every(isFiniteNumber)) {
     if (previous.close > previous.bbUpper && current.close < current.bbUpper) pushSignal(signals, 'upper_band_rejection');
+  }
+
+  const structureWindow = candles.slice(Math.max(0, index - 20), index);
+  if (structureWindow.length >= 10) {
+    const priorHigh = Math.max(...structureWindow.map((candle) => candle.high).filter(isFiniteNumber));
+    const priorLow = Math.min(...structureWindow.map((candle) => candle.low).filter(isFiniteNumber));
+    if ([previous.close, current.close, priorHigh].every(isFiniteNumber) && previous.close <= priorHigh && current.close > priorHigh) {
+      pushSignal(signals, 'bullish_bos');
+    }
+    if ([previous.close, current.close, priorLow].every(isFiniteNumber) && previous.close >= priorLow && current.close < priorLow) {
+      pushSignal(signals, 'bearish_bos');
+    }
+  }
+
+  if ([previous.close, previous.sma50, current.close, current.sma50, previous.sma20, current.sma20].every(isFiniteNumber)) {
+    if (previous.close <= previous.sma50 && current.close > current.sma50 && current.sma20 > previous.sma20) {
+      pushSignal(signals, 'bullish_trend_change');
+    }
+    if (previous.close >= previous.sma50 && current.close < current.sma50 && current.sma20 < previous.sma20) {
+      pushSignal(signals, 'bearish_trend_change');
+    }
   }
 
   return signals;

@@ -47,7 +47,7 @@ export function buildBriefEmail({ report, candidates, emailResult }) {
     const news = item.news?.items?.[0]?.title || 'No headline';
     const verdict = item.newsAnalysis?.verdict || 'neutral';
     const newsConfidence = item.newsAnalysis?.confidencePercentage ?? 0;
-    lines.push(`${item.symbol}: ${item.decision.action} score ${item.decision.score}, confidence ${item.decision.confidencePercentage ?? '--'}%, 3M ${item.ranking?.performance3m ?? '--'}%, news ${verdict} ${newsConfidence}% - ${news}`);
+    lines.push(`${item.symbol}: ${item.decision.action} final ${item.decision.score} (technical ${item.decision.technicalScore}, news ${item.decision.newsScore}), confidence ${item.decision.confidencePercentage ?? '--'}%, 3M ${item.ranking?.performance3m ?? '--'}%, news ${verdict} ${newsConfidence}% - ${news}`);
   }
 
   if (emailResult?.reason) lines.push('', `Email note: ${emailResult.reason}`);

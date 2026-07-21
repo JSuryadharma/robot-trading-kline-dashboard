@@ -26,8 +26,7 @@ export const config = {
   interval: process.env.KLINE_INTERVAL || '1D',
   historyFrom: process.env.HISTORY_FROM || '2025-06-01',
   historyTo: process.env.HISTORY_TO || '2026-06-01',
-  refreshMs: numberFromEnv('REFRESH_MS', 60_000),
-  initialBalance: numberFromEnv('INITIAL_BALANCE', 1_500_000),
+  initialBalance: numberFromEnv('INITIAL_BALANCE', 5_000_000),
   tradeAllocationPct: numberFromEnv('TRADE_ALLOCATION_PCT', 0.75),
   maxPositionPct: numberFromEnv('MAX_POSITION_PCT', 0.85),
   lotSize: numberFromEnv('LOT_SIZE', 100),
@@ -42,18 +41,18 @@ export const config = {
     chatId: process.env.TELEGRAM_CHAT_ID || ''
   },
   email: {
-    gmailUser: process.env.GMAIL_USER || '',
+    gmailUser: process.env.GMAIL_USER || 'jsuryadharma9@gmail.com',
     gmailAppPassword: process.env.GMAIL_APP_PASSWORD || '',
-    gmailTo: process.env.GMAIL_TO || ''
+    gmailTo: process.env.GMAIL_TO || 'jsuryadharma9@gmail.com'
   },
   ai: {
     mode: process.env.AI_ADVISOR_MODE || 'local',
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     model: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
-    lmStudioBaseUrl: process.env.LMSTUDIO_BASE_URL || 'http://192.168.1.55:1234/v1',
+    lmStudioBaseUrl: process.env.LMSTUDIO_BASE_URL || 'http://127.0.0.1:1234/v1',
     lmStudioModel: process.env.LMSTUDIO_MODEL || 'qwen/qwen3.5-9b',
     lmStudioApiKey: process.env.LMSTUDIO_API_KEY || '',
-    lmStudioTimeoutMs: numberFromEnv('LMSTUDIO_TIMEOUT_MS', 180_000),
+    lmStudioTimeoutMs: numberFromEnv('LMSTUDIO_TIMEOUT_MS', 30_000),
     lmStudioMaxTokens: numberFromEnv('LMSTUDIO_MAX_TOKENS', 1_600),
     lmStudioReasoningEffort: process.env.LMSTUDIO_REASONING_EFFORT || 'none'
   }

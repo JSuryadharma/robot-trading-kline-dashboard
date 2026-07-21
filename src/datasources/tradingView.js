@@ -64,12 +64,14 @@ function withinRange(candle, from, to) {
   return candle.date >= from && candle.date <= to;
 }
 
-export async function fetchTradingViewKlines({ symbol, interval, from, to, timeoutMs = 10_000 }) {
+export async function fetchTradingViewKlines({ symbol, interval, from, to, countBack: requestedCountBack, timeoutMs = 10_000 }) {
   if (typeof WebSocket !== 'function') {
     throw new Error('Node runtime does not expose a WebSocket client.');
   }
 
-  const countBack = Math.max(260, Math.ceil((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 90);
+  const countBack = Number.isFinite(requestedCountBack)
+    ? Math.max(260, Math.min(5_000, Math.round(requestedCountBack)))
+    : Math.max(260, Math.ceil((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 90);
   const chartSession = randomSession('cs');
   const quoteSession = randomSession('qs');
   const tvInterval = normalizeInterval(interval);

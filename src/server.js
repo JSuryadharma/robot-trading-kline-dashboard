@@ -13,9 +13,11 @@ import { getAdvisorReport } from './aiAdvisor.js';
 import { readJson, writeJson } from './storage.js';
 import { readSettings, updateSettings, publicSettings, stocksForMode } from './settings.js';
 import { normalizeStockList, stockFromInput } from './symbols.js';
-import { rankTopPerformers } from './ranking.js';
+import { buildWeeklyTradingPlan, rankTopPerformers } from './ranking.js';
 import { analyzeTodaysNewsWithAI, fetchNewsInterest } from './news.js';
 import { buildBriefEmail, sendGmailBrief } from './email.js';
+import { fetchHistoricalNewsArchive } from './news.js';
+import { runBacktraceResearch } from './backtrace.js';
 
 const notificationCenter = new NotificationCenter();
 const tradingRobot = new TradingRobot();
@@ -24,6 +26,7 @@ let latestPayload = null;
 let refreshInFlight = null;
 let lastCronKey = '';
 let rankingCache = { key: '', createdAt: 0, items: [] };
+let weeklyPlanCache = { key: '', createdAt: 0, items: [] };
 
 await initAuth();
 
@@ -37,13 +40,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 const hub = new WebSocketHub(server, {
-  authenticate: authenticateRequest,
-  onMessage: async (client, message) => {
-    if (message.type === 'refresh') {
-      const payload = await refreshMarket('websocket');
-      hub.send(client, { type: 'snapshot', payload });
-    }
-  }
+  authenticate: authenticateRequest
 });
 
 notificationCenter.setBroadcast((message) => hub.broadcast(message));
@@ -55,10 +52,6 @@ server.listen(config.port, () => {
 refreshMarket('startup').catch((error) => {
   console.error('Startup refresh failed:', error);
 });
-
-setInterval(() => {
-  refreshMarket('interval').catch((error) => console.error('Interval refresh failed:', error));
-}, config.refreshMs);
 
 setInterval(() => {
   checkScheduledAIJob().catch((error) => console.error('Scheduled AI job failed:', error));
@@ -110,7 +103,22 @@ async function route(req, res) {
   if (req.method === 'POST' && url.pathname === '/api/settings') {
     const body = await readBody(req);
     const settings = await updateSettings(body);
-    latestPayload = null;
+    if (latestPayload) {
+      latestPayload = {
+        ...latestPayload,
+        config: publicConfig(settings),
+        settings: publicSettings(settings),
+        tradePolicy: {
+          ...(latestPayload.tradePolicy || {}),
+          minScore: settings.autoTrade.minScore,
+          minConfidence: settings.autoTrade.minConfidence,
+          runOnRefresh: settings.autoTrade.runOnRefresh,
+          takeProfitPct: settings.autoTrade.takeProfitPct,
+          stopLossPct: settings.autoTrade.stopLossPct,
+          parameterWeights: settings.autoTrade.parameterWeights
+        }
+      };
+    }
     sendJson(res, 200, publicSettings(settings));
     return;
   }
@@ -149,6 +157,16 @@ async function route(req, res) {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/research/backtrace') {
+    const body = await readBody(req);
+    const payload = await runResearchBacktrace({
+      symbolInput: body.symbol,
+      refreshNews: Boolean(body.refreshNews)
+    });
+    sendJson(res, 200, payload);
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/notifications') {
     sendJson(res, 200, { items: await notificationCenter.list() });
     return;
@@ -174,10 +192,29 @@ async function refreshMarket(reason, { symbolInput, allowTrade = false, suppress
   refreshInFlight = (async () => {
     const settings = await readSettings();
     const ranking = await getTopRanking(settings);
+    const weeklyPlan = await getWeeklyTradingPlan(settings);
     const stock = stockFromInput(symbolInput || settings.activeSymbol || ranking[0]?.symbol);
     const snapshot = await loadMarketSnapshot(stock);
+    broadcastNewsStatus({
+      state: 'loading',
+      stage: 'fetching',
+      symbol: stock.yfSymbol,
+      message: 'Fetching news sources',
+      detail: 'Reading Yahoo RSS and web-search headlines before the AI verdict.'
+    });
     const todaysNews = await fetchNewsInterest(stock, { todayOnly: true });
+    broadcastNewsStatus({
+      state: 'loading',
+      stage: 'analyzing',
+      symbol: stock.yfSymbol,
+      message: todaysNews.items?.length ? 'Sending news to AI model' : 'Preparing local news verdict',
+      detail: todaysNews.items?.length
+        ? `${todaysNews.items.length} headline${todaysNews.items.length === 1 ? '' : 's'} found; requesting LM Studio analysis.`
+        : 'No usable headline found in the 3-day window; local neutral verdict will be used.'
+    });
     const newsAnalysis = await analyzeTodaysNewsWithAI(stock, todaysNews, snapshot);
+    const newsStatus = buildNewsStatus(stock, todaysNews, newsAnalysis);
+    broadcastNewsStatus(newsStatus);
     const beforePortfolio = await tradingRobot.getPortfolio();
     const decision = makeDecision(snapshot, beforePortfolio, { newsAnalysis, tradePolicy: settings.autoTrade });
     const executeTrade = isDecisionTradeable(decision, {
@@ -186,7 +223,10 @@ async function refreshMarket(reason, { symbolInput, allowTrade = false, suppress
       minConfidence: settings.autoTrade.minConfidence
     });
     const tradeResult = await tradingRobot.applyDecision(snapshot, decision, reason, { execute: executeTrade });
-    const aiReports = await readJson('ai-reports.json', { reports: [] });
+    const [aiReports, researchReports] = await Promise.all([
+      readJson('ai-reports.json', { reports: [] }),
+      readJson('research-reports.json', { reports: [] })
+    ]);
 
     if (tradeResult.transaction) {
       await notificationCenter.notify({
@@ -205,19 +245,24 @@ async function refreshMarket(reason, { symbolInput, allowTrade = false, suppress
       decision,
       news: {
         feed: todaysNews,
-        analysis: newsAnalysis
+        analysis: newsAnalysis,
+        status: newsStatus
       },
       tradePolicy: {
         executeTrade,
         minScore: settings.autoTrade.minScore,
         minConfidence: settings.autoTrade.minConfidence,
         runOnRefresh: settings.autoTrade.runOnRefresh,
-        takeProfitPct: settings.autoTrade.takeProfitPct
+        takeProfitPct: settings.autoTrade.takeProfitPct,
+        stopLossPct: settings.autoTrade.stopLossPct,
+        parameterWeights: settings.autoTrade.parameterWeights
       },
       ranking,
+      weeklyPlan,
       portfolio: markToMarket(tradeResult.portfolio, snapshot),
       notifications: (await notificationCenter.list()).slice(0, 40),
       aiReports: sortReports(aiReports.reports).slice(0, 12),
+      research: latestResearchForSymbol(researchReports.reports, stock.yfSymbol),
       updatedAt: new Date().toISOString()
     };
     await writeJson('market-cache.json', latestPayload);
@@ -230,6 +275,146 @@ async function refreshMarket(reason, { symbolInput, allowTrade = false, suppress
   } finally {
     refreshInFlight = null;
   }
+}
+
+async function runResearchBacktrace({ symbolInput, refreshNews = false } = {}) {
+  let settings = await readSettings();
+  const stock = stockFromInput(symbolInput || settings.activeSymbol);
+  broadcastResearchStatus(stock, 'loading', 'Loading one-year daily K-Line history');
+  const snapshot = await loadMarketSnapshot(stock);
+  const to = snapshot.latest?.date;
+  if (!to) throw new Error('Research could not find a valid latest candle.');
+  const from = addDays(to, -365);
+  broadcastResearchStatus(stock, 'loading', 'Collecting backdated news archive');
+  const archive = await getHistoricalNewsArchive(stock, { from, to, force: refreshNews });
+  broadcastResearchStatus(stock, 'loading', 'Testing daily parameters and previous-candle performance');
+  const report = runBacktraceResearch({
+    snapshot,
+    newsItems: archive.items,
+    settings,
+    applyAdjustments: true
+  });
+
+  if (report.adjustment.applied) {
+    settings = await updateSettings({
+      autoTrade: {
+        minScore: report.finalStrategy.minScore,
+        takeProfitPct: report.finalStrategy.takeProfitPct,
+        stopLossPct: report.finalStrategy.stopLossPct,
+        parameterWeights: report.finalStrategy.parameterWeights
+      },
+      aiCron: {
+        minScoreToAutoTrade: report.finalStrategy.minScore
+      }
+    });
+  }
+
+  const researchState = await readJson('research-reports.json', { reports: [] });
+  researchState.reports = sortReports([report, ...(researchState.reports || [])]).slice(0, 40);
+  await writeJson('research-reports.json', researchState);
+
+  await notificationCenter.notify({
+    title: `1Y Daily Research ${stock.yfSymbol}`,
+    message: `${report.final.tradeCount ? `${report.final.winRatePercentage}% final strategy win rate` : 'Final strategy win rate is not measurable'} across ${report.final.tradeCount} validation trades. ${report.adjustment.applied ? 'Validated parameters were applied.' : report.adjustment.recommendation}`,
+    level: report.adjustment.applied ? 'success' : 'info',
+    category: 'research',
+    metadata: {
+      symbol: stock.yfSymbol,
+      range: '1y',
+      timeframe: '1D',
+      winRatePercentage: report.final.winRatePercentage,
+      applied: report.adjustment.applied
+    }
+  });
+
+  const basePayload = latestPayload?.snapshot?.yfSymbol === stock.yfSymbol
+    ? latestPayload
+    : await refreshMarket('post-research-load', { symbolInput: stock.yfSymbol, suppressTrade: true });
+  const portfolio = await tradingRobot.getPortfolio();
+  const displaySnapshot = trimSnapshot(snapshot);
+  const decision = makeDecision(snapshot, portfolio, {
+    newsAnalysis: basePayload.news?.analysis,
+    tradePolicy: settings.autoTrade
+  });
+  latestPayload = {
+    ...basePayload,
+    settings: publicSettings(settings),
+    snapshot: displaySnapshot,
+    decision,
+    research: report,
+    tradePolicy: {
+      ...basePayload.tradePolicy,
+      minScore: settings.autoTrade.minScore,
+      minConfidence: settings.autoTrade.minConfidence,
+      takeProfitPct: settings.autoTrade.takeProfitPct,
+      stopLossPct: settings.autoTrade.stopLossPct,
+      parameterWeights: settings.autoTrade.parameterWeights
+    },
+    portfolio: markToMarket(portfolio, displaySnapshot),
+    notifications: (await notificationCenter.list()).slice(0, 40),
+    updatedAt: new Date().toISOString()
+  };
+  await writeJson('market-cache.json', latestPayload);
+  broadcastResearchStatus(
+    stock,
+    'completed',
+    report.final.tradeCount
+      ? `Research completed at ${report.final.winRatePercentage}% final strategy win rate`
+      : 'Research completed with no executable validation trade'
+  );
+  hub.broadcast({ type: 'snapshot', payload: latestPayload });
+  return latestPayload;
+}
+
+async function getHistoricalNewsArchive(stock, { from, to, force = false } = {}) {
+  const state = await readJson('historical-news.json', { symbols: {} });
+  const cached = state.symbols?.[stock.yfSymbol];
+  const cacheFresh = cached?.schemaVersion === 2
+    && cached?.fetchedAt
+    && Date.now() - Date.parse(cached.fetchedAt) < 24 * 60 * 60 * 1000;
+  const cacheCoversRange = cached?.from <= from && cached?.to >= to;
+  if (!force && cacheFresh && cacheCoversRange) return cached;
+
+  const fetched = await fetchHistoricalNewsArchive(stock, { from, to });
+  const mergedItems = mergeArchivedNewsItems([...(cached?.items || []), ...(fetched.items || [])])
+    .filter((item) => item.publishedDate >= from && item.publishedDate <= to)
+    .slice(0, 800);
+  const archive = {
+    ...fetched,
+    schemaVersion: 2,
+    from,
+    to,
+    itemCount: mergedItems.length,
+    items: mergedItems
+  };
+  state.symbols = { ...(state.symbols || {}), [stock.yfSymbol]: archive };
+  await writeJson('historical-news.json', state);
+  return archive;
+}
+
+function broadcastResearchStatus(stock, state, message) {
+  hub.broadcast({
+    type: 'research-status',
+    payload: {
+      state,
+      symbol: stock.yfSymbol,
+      message,
+      updatedAt: new Date().toISOString()
+    }
+  });
+}
+
+function mergeArchivedNewsItems(items) {
+  const seen = new Set();
+  return items
+    .filter((item) => item?.title && item?.publishedDate)
+    .filter((item) => {
+      const key = `${item.publishedDate}|${String(item.title).toLowerCase().replace(/\s+/g, ' ').trim()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => String(b.publishedDate).localeCompare(String(a.publishedDate)));
 }
 
 async function triggerManualTrade({ force = false } = {}) {
@@ -330,6 +515,8 @@ async function runScheduledAIJob(label, { force = false, settings: providedSetti
     tvSymbol: best.tvSymbol,
     action: best.decision.action,
     score: best.decision.score,
+    technicalScore: best.decision.technicalScore,
+    newsScore: best.decision.newsScore,
     confidence: best.decision.confidence,
     confidencePercentage: best.decision.confidencePercentage,
     newsAnalysis: best.newsAnalysis,
@@ -376,7 +563,8 @@ async function evaluateCandidates(settings, ranking) {
       const news = await fetchNewsInterest(stock, { todayOnly: true });
       const newsAnalysis = await analyzeTodaysNewsWithAI(stock, news, snapshot);
       const decision = makeDecision(snapshot, portfolio, { newsAnalysis, tradePolicy: settings.autoTrade });
-      const interestScore = round((decision.score || 0) + ((rankingRecord?.performance3m || 0) * 0.45) + ((newsAnalysis.score || 0) * 2.5) + ((newsAnalysis.confidencePercentage || 0) * 0.05));
+      const headlineInterest = Math.min(Number(newsAnalysis.headlineCount || 0), 4) * 0.5;
+      const interestScore = round((decision.score || 0) + ((rankingRecord?.performance3m || 0) * 0.45) + headlineInterest);
       candidates.push({
         stock,
         symbol: stock.yfSymbol,
@@ -412,6 +600,76 @@ async function getTopRanking(settings, { force = false } = {}) {
   const items = await rankTopPerformers(settings.rankingUniverse, { months: 3, limit: 10 });
   rankingCache = { key, createdAt: Date.now(), items };
   return items;
+}
+
+async function getWeeklyTradingPlan(settings, { force = false } = {}) {
+  const key = normalizeStockList(settings.rankingUniverse).map((stock) => stock.yfSymbol).join(',');
+  const fresh = Date.now() - weeklyPlanCache.createdAt < 10 * 60 * 1000;
+  if (!force && fresh && weeklyPlanCache.key === key) return weeklyPlanCache.items;
+  const items = await buildWeeklyTradingPlan(settings.rankingUniverse, { limit: 10 });
+  weeklyPlanCache = { key, createdAt: Date.now(), items };
+  return items;
+}
+
+function broadcastNewsStatus(status) {
+  const payload = {
+    updatedAt: new Date().toISOString(),
+    ...status
+  };
+  hub.broadcast({ type: 'news-status', payload });
+  return payload;
+}
+
+function buildNewsStatus(stock, news, analysis) {
+  const headlineCount = Number.isFinite(analysis?.headlineCount)
+    ? analysis.headlineCount
+    : (analysis?.items || news?.items || []).length;
+  if (analysis?.mode === 'lmstudio' || analysis?.engine?.usedLmStudio) {
+    return {
+      state: 'completed',
+      stage: 'completed',
+      symbol: stock.yfSymbol,
+      message: 'News verdict completed',
+      detail: `Fetched ${headlineCount} headline${headlineCount === 1 ? '' : 's'} and analyzed them with LM Studio.`,
+      engine: 'LM Studio',
+      headlineCount
+    };
+  }
+  if (analysis?.mode === 'local-fallback') {
+    return {
+      state: 'fallback',
+      stage: 'completed',
+      symbol: stock.yfSymbol,
+      message: 'News fetch completed with fallback',
+      detail: `Fetched ${headlineCount} headline${headlineCount === 1 ? '' : 's'}, but LM Studio failed${analysis.error ? `: ${analysis.error}` : ''}. Local scoring was used.`,
+      engine: 'Local fallback',
+      headlineCount,
+      error: analysis?.error || ''
+    };
+  }
+  if (news?.error && headlineCount === 0) {
+    return {
+      state: 'failed',
+      stage: 'completed',
+      symbol: stock.yfSymbol,
+      message: 'News fetch completed with errors',
+      detail: `${news.error}. Local neutral scoring was used because no source headline was available.`,
+      engine: 'Local rules',
+      headlineCount,
+      error: news.error
+    };
+  }
+  return {
+    state: 'completed',
+    stage: 'completed',
+    symbol: stock.yfSymbol,
+    message: 'News verdict completed',
+    detail: headlineCount
+      ? `Fetched ${headlineCount} headline${headlineCount === 1 ? '' : 's'} and scored them locally.`
+      : 'News fetch completed, but no usable headline was found in the configured window.',
+    engine: 'Local rules',
+    headlineCount
+  };
 }
 
 function trimSnapshot(snapshot) {
@@ -494,7 +752,7 @@ function publicConfig(settings) {
     interval: config.interval,
     historyFrom: config.historyFrom,
     historyTo: config.historyTo,
-    refreshMs: config.refreshMs,
+    refreshPolicy: 'on-demand',
     initialBalance: config.initialBalance,
     tradeAllocationPct: config.tradeAllocationPct,
     maxPositionPct: config.maxPositionPct,
@@ -503,7 +761,8 @@ function publicConfig(settings) {
     criticalHours: settings?.aiCron?.times || config.criticalHours,
     telegramEnabled: Boolean(config.telegram.botToken && config.telegram.chatId),
     emailEnabled: Boolean(settings?.email?.enabled),
-    aiMode: config.ai.mode
+    aiMode: config.ai.mode,
+    research: { range: '1y', timeframe: '1D' }
   };
 }
 
@@ -520,17 +779,29 @@ function sortReports(reports = []) {
   return reports.slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
 }
 
+function latestResearchForSymbol(reports = [], symbol) {
+  return sortReports(reports).find((report) => report.symbol === symbol) || null;
+}
+
+function addDays(dateText, days) {
+  const date = new Date(`${dateText}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + Number(days || 0));
+  return date.toISOString().slice(0, 10);
+}
+
 function lightCandidate(item) {
   return {
     symbol: item.symbol,
     tvSymbol: item.tvSymbol,
     action: item.decision.action,
     score: item.decision.score,
+    technicalScore: item.decision.technicalScore,
+    newsScore: item.decision.newsScore,
+    newsRawScore: item.decision.newsRawScore,
     confidence: item.decision.confidence,
     confidencePercentage: item.decision.confidencePercentage,
     interestScore: item.interestScore,
     performance3m: item.ranking?.performance3m ?? null,
-    newsScore: item.newsAnalysis?.score ?? item.news?.score ?? 0,
     newsVerdict: item.newsAnalysis?.verdict || 'neutral',
     newsConfidencePercentage: item.newsAnalysis?.confidencePercentage ?? 0,
     headline: item.news?.items?.[0]?.title || ''

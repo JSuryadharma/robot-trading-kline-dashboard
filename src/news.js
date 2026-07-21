@@ -66,6 +66,54 @@ export async function fetchNewsInterest(stock, { timeoutMs = 10_000, todayOnly =
   }
 }
 
+export async function fetchHistoricalNewsArchive(stock, { from, to, timeoutMs = 45_000, segmentDays = 60 } = {}) {
+  const safeTo = String(to || todayInTimeZone(config.timeZone));
+  const safeFrom = String(from || dateDaysAgo(safeTo, 365));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const items = [];
+  const errors = [];
+
+  try {
+    for (const segment of dateSegments(safeFrom, safeTo, segmentDays)) {
+      try {
+        const queryName = stock.name && stock.name !== stock.code ? ` OR "${stock.name}"` : '';
+        const query = `(${stock.code}${queryName}) saham after:${segment.from} before:${segment.before}`;
+        const url = new URL('https://news.google.com/rss/search');
+        url.searchParams.set('q', query);
+        url.searchParams.set('hl', 'id');
+        url.searchParams.set('gl', 'ID');
+        url.searchParams.set('ceid', 'ID:id');
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RobotTradingResearch/1.0)' }
+        });
+        if (!response.ok) throw new Error(`Google News HTTP ${response.status}`);
+        const xml = await response.text();
+        items.push(...googleNewsItemsFromXml(xml));
+      } catch (error) {
+        errors.push(`${segment.from} to ${segment.to}: ${error.message}`);
+        if (controller.signal.aborted) break;
+      }
+    }
+
+    const merged = mergeNewsItems(items)
+      .filter((item) => isDateBetween(item.publishedDate, safeFrom, safeTo))
+      .slice(0, 800);
+    return {
+      source: 'google-news-rss-archive',
+      from: safeFrom,
+      to: safeTo,
+      fetchedAt: new Date().toISOString(),
+      itemCount: merged.length,
+      items: merged,
+      errors
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function analyzeTodaysNewsWithAI(stock, news, snapshot = {}) {
   const headlines = (news.items || []).slice(0, 6);
   if (headlines.length > 0) {
@@ -200,6 +248,26 @@ function rssItemsFromXml(xml, { source, sourceName, searchQuery = '', unwrapLink
       };
     })
     .filter((item) => item.title && item.link);
+}
+
+function googleNewsItemsFromXml(xml) {
+  return [...String(xml || '').matchAll(/<item>([\s\S]*?)<\/item>/g)]
+    .map((match) => {
+      const publishedAt = decodeXml(textBetween(match[1], 'pubDate'));
+      const link = decodeXml(textBetween(match[1], 'link'));
+      const sourceName = decodeXml(textBetween(match[1], 'source')) || 'Google News';
+      return {
+        title: cleanSummary(decodeXml(textBetween(match[1], 'title'))),
+        link,
+        publishedAt,
+        publishedDate: dateInTimeZone(publishedAt, config.timeZone),
+        summary: cleanSummary(decodeXml(textBetween(match[1], 'description'))),
+        source: 'google-news-rss-archive',
+        sourceName,
+        sourceDomain: domainFromUrl(link)
+      };
+    })
+    .filter((item) => item.title && item.link && item.publishedDate);
 }
 
 function buildNewsPrompt(stock, news) {
@@ -476,6 +544,29 @@ function dateDaysAgo(dateText, days) {
   const date = new Date(`${dateText}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() - Math.max(0, Number(days) || 0));
   return date.toISOString().slice(0, 10);
+}
+
+function dateSegments(from, to, segmentDays) {
+  const output = [];
+  let cursor = String(from);
+  const endExclusive = addDays(to, 1);
+  const size = Math.max(14, Math.min(120, Number(segmentDays) || 60));
+  while (cursor < endExclusive) {
+    const before = minDate(addDays(cursor, size), endExclusive);
+    output.push({ from: cursor, to: addDays(before, -1), before });
+    cursor = before;
+  }
+  return output;
+}
+
+function addDays(dateText, days) {
+  const date = new Date(`${dateText}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + Number(days || 0));
+  return date.toISOString().slice(0, 10);
+}
+
+function minDate(a, b) {
+  return a < b ? a : b;
 }
 
 function isDateBetween(dateText, fromDate, toDate) {

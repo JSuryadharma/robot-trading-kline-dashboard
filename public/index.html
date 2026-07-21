@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Robot Trading Dashboard</title>
-    <link rel="stylesheet" href="/styles.css?v=mobile-tv-retry-actions-20260716">
+    <link rel="stylesheet" href="/styles.css?v=responsive-desktop-20260721">
   </head>
   <body>
     <main id="loginView" class="login-shell hidden">
@@ -59,6 +59,11 @@
           <button id="logoutButton" class="text-button" type="button">Logout</button>
         </div>
       </header>
+
+      <div id="appLoadingBar" class="app-loading-bar hidden" role="status" aria-live="polite">
+        <span class="loader-spinner" aria-hidden="true"></span>
+        <span id="appLoadingText">Updating dashboard</span>
+      </div>
 
       <section class="view-toolbar">
         <div>
@@ -117,6 +122,103 @@
           </section>
         </article>
 
+        <article class="panel wide-panel trading-plan-panel" data-page="summary">
+          <div class="panel-heading">
+            <div>
+              <h2>Trading Plan 1W</h2>
+              <p class="muted">Current IHSG stock performers based on this week price action.</p>
+            </div>
+            <span id="tradingPlanBadge" class="badge">1W</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Stock</th>
+                  <th>Close</th>
+                  <th>1D Diff</th>
+                  <th>1W Diff</th>
+                  <th>Week Range</th>
+                  <th>Volume 5D</th>
+                  <th>Plan</th>
+                </tr>
+              </thead>
+              <tbody id="tradingPlanTable"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel wide-panel research-panel collapsed" data-page="summary">
+          <div class="panel-heading">
+            <div>
+              <h2>Auto-Trade Backtrace</h2>
+              <p class="muted">One-year daily walk-forward validation.</p>
+            </div>
+            <span id="researchBadge" class="badge">Not run</span>
+          </div>
+          <div class="research-controls">
+            <div class="research-specs" aria-label="Backtrace specification">
+              <span><small>Range</small><strong>1 Year</strong></span>
+              <span><small>Timeframe</small><strong>1D</strong></span>
+              <span><small>Validation</small><strong>Walk-forward</strong></span>
+            </div>
+            <button id="runResearchButton" type="button" class="primary-button">Run 1Y backtrace</button>
+          </div>
+          <div id="researchStatus" class="research-status idle">
+            <strong>Research is ready</strong>
+            <span>Completed candle assessment, next-session execution.</span>
+          </div>
+          <div id="researchSummary" class="research-summary"></div>
+          <div id="researchAdjustment" class="research-adjustment"></div>
+          <div class="research-detail-grid">
+            <section>
+              <h3>Final Parameter Values</h3>
+              <div id="researchParameters" class="research-parameters"></div>
+            </section>
+            <section>
+              <h3>Previous Candle Assessment</h3>
+              <div id="researchTechnical" class="research-technical"></div>
+            </section>
+          </div>
+          <form id="researchWeightForm" class="research-weight-form hidden">
+            <div class="research-weight-heading">
+              <div>
+                <h3>Technical Weight Adjustment</h3>
+                <p id="researchWeightScenario">Best-tested values from the latest backtrace.</p>
+              </div>
+              <div class="research-weight-scenarios" aria-label="Weight preset">
+                <button type="button" data-research-weight-scenario="active">Active final</button>
+                <button type="button" data-research-weight-scenario="best">Best tested</button>
+              </div>
+            </div>
+            <div id="researchWeightControls" class="research-weight-controls"></div>
+            <div class="research-weight-footer">
+              <p id="researchWeightStatus">Adjust or save the best-tested technical weights.</p>
+              <button type="submit" class="primary-button">Save technical weights</button>
+            </div>
+          </form>
+          <section class="research-traces">
+            <h3>Validation Trades</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Signal</th>
+                    <th>Entry</th>
+                    <th>Exit</th>
+                    <th>Final Score</th>
+                    <th>Previous Candle</th>
+                    <th>Return</th>
+                    <th>Exit Reason</th>
+                  </tr>
+                </thead>
+                <tbody id="researchTradeTable"></tbody>
+              </table>
+            </div>
+          </section>
+        </article>
+
         <article class="panel timeframe-panel" data-page="ai">
           <div class="panel-heading">
             <div>
@@ -134,7 +236,7 @@
 
         <article class="panel decision-panel" data-page="ai">
           <div class="panel-heading">
-            <h2>Decision Parameters</h2>
+            <h2>Auto Trade Parameters</h2>
             <span id="scoreBadge" class="badge">Score --</span>
           </div>
           <div id="parameterList" class="parameter-list"></div>
@@ -155,6 +257,8 @@
                   <th>3M</th>
                   <th>High</th>
                   <th>Low</th>
+                  <th>Buy Target</th>
+                  <th>Sell Target</th>
                   <th>Volume 20D</th>
                 </tr>
               </thead>
@@ -223,7 +327,7 @@
                   <b id="minScoreLabel">--</b>
                 </span>
                 <input id="minScoreToAutoTrade" type="range" min="0" max="100" step="1">
-                <small>Higher means fewer but stricter entries.</small>
+                <small>Minimum final score after technical and news are combined.</small>
               </label>
               <label class="range-control">
                 <span>
@@ -232,6 +336,14 @@
                 </span>
                 <input id="takeProfitPct" type="range" min="0.5" max="40" step="0.5">
                 <small>SELL can trigger after this profit margin.</small>
+              </label>
+              <label class="range-control">
+                <span>
+                  <strong>Stop loss</strong>
+                  <b id="stopLossLabel">--</b>
+                </span>
+                <input id="stopLossPct" type="range" min="0.5" max="15" step="0.5">
+                <small>SELL protects the position when loss reaches this margin.</small>
               </label>
             </div>
 
@@ -332,6 +444,11 @@
             <span id="aiJobBadge" class="badge">Last update</span>
           </div>
           <div id="newsWindowSummary" class="news-window-summary"></div>
+          <div id="newsFetchStatus" class="news-fetch-status idle">
+            <span>Status</span>
+            <strong>Waiting for news refresh</strong>
+            <small>News fetch and AI verdict progress will appear here.</small>
+          </div>
           <div id="aiReports" class="compact-list"></div>
         </article>
 
@@ -388,28 +505,84 @@
           </div>
           <div id="notificationList" class="compact-list"></div>
         </article>
+
+        <article class="panel notification-email-panel" data-page="notifications">
+          <div class="panel-heading">
+            <div>
+              <h2>Gmail SMTP Push</h2>
+              <p class="muted">Email update untuk hasil AI dan aktivitas penting.</p>
+            </div>
+            <span class="badge">SMTP</span>
+          </div>
+          <form id="notificationEmailForm" class="settings-form notification-email-form">
+            <label class="rule-switch compact">
+              <input id="notificationEmailEnabled" type="checkbox">
+              <span class="switch-track" aria-hidden="true"></span>
+              <span>
+                <strong>Enable Gmail push</strong>
+                <small>Use Gmail SMTP when cron produces an update</small>
+              </span>
+            </label>
+            <label class="field-card">
+              <span>Receiver email</span>
+              <input id="notificationGmailTo" type="email" value="jsuryadharma9@gmail.com">
+            </label>
+            <label class="field-card">
+              <span>Sender Gmail</span>
+              <input id="notificationGmailUser" type="email" value="jsuryadharma9@gmail.com">
+            </label>
+            <label class="field-card">
+              <span>Gmail app password</span>
+              <input id="notificationGmailAppPassword" type="password" autocomplete="new-password">
+            </label>
+            <div class="rule-footer">
+              <button type="submit" class="primary-button">Save Gmail SMTP</button>
+              <p id="notificationEmailStatus" class="form-note"></p>
+            </div>
+          </form>
+        </article>
       </section>
 
       <nav class="floating-menu" aria-label="Dashboard navigation">
+        <div class="desktop-nav-brand" aria-hidden="true">
+          <span class="desktop-nav-mark">
+            <svg viewBox="0 0 24 24"><path d="M4 18V6M4 18h16M8 15v-4M12 15V8M16 15v-2M7 7h10"/></svg>
+          </span>
+          <span>
+            <small>Robot</small>
+            <strong>Trading</strong>
+          </span>
+        </div>
         <button type="button" class="floating-menu-item" data-view-target="summary" aria-label="Summary page">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4v9ZM14 20h6V4h-6v16ZM4 20h6v-3H4v3Z"/></svg>
-          <span>Summary</span>
+          <span class="mobile-nav-label">Summary</span>
+          <span class="desktop-nav-label">Summary</span>
         </button>
         <button type="button" class="floating-menu-item" data-view-target="ai" aria-label="AI Decision page">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3M12 18v3M4.9 7.1 7 9.2M17 14.8l2.1 2.1M3 12h3M18 12h3M4.9 16.9 7 14.8M17 9.2l2.1-2.1M9 9h6v6H9z"/></svg>
-          <span>AI</span>
+          <span class="mobile-nav-label">AI</span>
+          <span class="desktop-nav-label">AI Decision</span>
         </button>
         <button type="button" class="floating-menu-item" data-view-target="position" aria-label="Position page">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-3M7 7h10"/></svg>
-          <span>Position</span>
+          <span class="mobile-nav-label">Position</span>
+          <span class="desktop-nav-label">Position & Rules</span>
         </button>
         <button type="button" class="floating-menu-item" data-view-target="notifications" aria-label="Notification page">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
-          <span>Notif</span>
+          <span class="mobile-nav-label">Notif</span>
+          <span class="desktop-nav-label">Notifications</span>
         </button>
+        <div class="desktop-nav-footer" aria-hidden="true">
+          <span></span>
+          <div>
+            <strong>Paper mode</strong>
+            <small>Local execution</small>
+          </div>
+        </div>
       </nav>
     </main>
 
-    <script src="/app.js?v=mobile-tv-retry-actions-20260716" type="module"></script>
+    <script src="/app.js?v=responsive-desktop-20260721" type="module"></script>
   </body>
 </html>

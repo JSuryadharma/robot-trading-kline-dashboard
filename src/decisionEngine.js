@@ -10,8 +10,23 @@ const triggerBaseScores = {
   macd_bull_cross: 12,
   macd_bear_cross: -12,
   lower_band_reversal: 10,
-  upper_band_rejection: -10
+  upper_band_rejection: -10,
+  bullish_bos: 18,
+  bearish_bos: -18,
+  bullish_trend_change: 14,
+  bearish_trend_change: -14
 };
+
+export const defaultParameterWeights = Object.freeze({
+  candle: 1,
+  trend: 1,
+  momentum: 1,
+  volatility: 1,
+  volume: 1,
+  calibration: 1,
+  triggers: 1,
+  news: 1
+});
 
 export function makeDecision(snapshot, portfolio, context = {}) {
   const latest = snapshot.latest;
@@ -22,6 +37,8 @@ export function makeDecision(snapshot, portfolio, context = {}) {
       score: 0,
       technicalScore: 0,
       newsScore: 0,
+      newsRawScore: 0,
+      scoreBreakdown: { technical: 0, news: 0, final: 0 },
       confidence: 'low',
       confidencePercentage: 0,
       parameters: [],
@@ -32,24 +49,23 @@ export function makeDecision(snapshot, portfolio, context = {}) {
 
   const recordsById = Object.fromEntries(snapshot.calibration.records.map((record) => [record.id, record]));
   const parameters = [];
+  const parameterWeights = normalizeParameterWeights(context.parameterWeights || context.tradePolicy?.parameterWeights);
   let score = 0;
 
-  score += addParameter(parameters, trendScore(latest, snapshot.candles), 'Trend structure');
-  score += addParameter(parameters, momentumScore(latest), 'Momentum');
-  score += addParameter(parameters, volatilityScore(latest), 'Volatility risk');
-  score += addParameter(parameters, volumeScore(latest), 'Volume confirmation');
-  score += addParameter(parameters, calibrationBias(snapshot.calibration), 'Historical signal calibration');
+  score += addParameter(parameters, previousCandleScore(latest, snapshot.candles), 'Previous candle performance', parameterWeights.candle);
+  score += addParameter(parameters, trendScore(latest, snapshot.candles), 'Trend structure', parameterWeights.trend);
+  score += addParameter(parameters, momentumScore(latest), 'Momentum', parameterWeights.momentum);
+  score += addParameter(parameters, volatilityScore(latest), 'Volatility risk', parameterWeights.volatility);
+  score += addParameter(parameters, volumeScore(latest), 'Volume confirmation', parameterWeights.volume);
+  score += addParameter(parameters, calibrationBias(snapshot.calibration), 'Historical signal calibration', parameterWeights.calibration);
 
   const triggerContribution = triggerScore(snapshot.currentSignals, recordsById);
-  score += addParameter(parameters, triggerContribution, 'Current reversal/swing triggers');
+  score += addParameter(parameters, triggerContribution, 'Current reversal/swing triggers', parameterWeights.triggers);
   const technicalScore = score;
 
   const newsContribution = newsScore(context.newsAnalysis);
-  addParameter(parameters, {
-    ...newsContribution,
-    score: 0,
-    value: `${newsContribution.value} | informational only, final verdict uses technical score`
-  }, 'AI News Verdict');
+  const appliedNewsScore = addParameter(parameters, newsContribution, 'AI News Verdict', parameterWeights.news);
+  score += appliedNewsScore;
 
   const thresholds = adjustedThresholds(snapshot.calibration, latest);
   const position = portfolio.positions?.[snapshot.symbol];
@@ -76,12 +92,23 @@ export function makeDecision(snapshot, portfolio, context = {}) {
     verdict,
     score: round(score),
     technicalScore: round(technicalScore),
-    newsScore: round(newsContribution.score),
+    newsScore: round(appliedNewsScore),
+    newsBaseScore: round(newsContribution.score),
+    newsRawScore: round(newsContribution.rawScore),
+    newsReliabilityPercentage: newsContribution.reliabilityPercentage,
+    parameterWeights,
+    scoreBreakdown: {
+      technical: round(technicalScore),
+      news: round(appliedNewsScore),
+      final: round(score)
+    },
     confidence,
     confidencePercentage,
     thresholds,
     parameters,
     newsAnalysis: context.newsAnalysis || null,
+    priceTargets: snapshot.priceTargets || null,
+    marketStructure: snapshot.marketStructure || null,
     reasons,
     triggerAdjustments: snapshot.currentSignals.map((signal) => ({
       ...signal,
@@ -105,6 +132,46 @@ export function isDecisionTradeable(decision, policy = {}) {
     return protective || Math.abs(decision.score) >= minScore;
   }
   return false;
+}
+
+function previousCandleScore(latest, candles = []) {
+  const previous = candles.length > 1 ? candles.at(-2) : null;
+  if (![latest.open, latest.high, latest.low, latest.close].every(isFiniteNumber)) {
+    return { score: 0, value: 'Insufficient completed candle data' };
+  }
+
+  const range = latest.high - latest.low;
+  if (!(range > 0)) return { score: 0, value: 'Completed candle had no usable range' };
+  const bodyStrength = (latest.close - latest.open) / range;
+  const closeLocation = (latest.close - latest.low) / range;
+  const changePct = isFiniteNumber(latest.changePct)
+    ? latest.changePct
+    : isFiniteNumber(previous?.close) && previous.close !== 0
+      ? ((latest.close - previous.close) / previous.close) * 100
+      : 0;
+  const gapPct = isFiniteNumber(previous?.close) && previous.close !== 0
+    ? ((latest.open - previous.close) / previous.close) * 100
+    : 0;
+  const volumeRatio = isFiniteNumber(latest.volume) && isFiniteNumber(latest.volumeSma20) && latest.volumeSma20 > 0
+    ? latest.volume / latest.volumeSma20
+    : null;
+
+  let score = 0;
+  if (bodyStrength >= 0.45 && closeLocation >= 0.7) score += 7;
+  else if (bodyStrength <= -0.45 && closeLocation <= 0.3) score -= 7;
+  else if (closeLocation >= 0.75 && changePct > 0) score += 4;
+  else if (closeLocation <= 0.25 && changePct < 0) score -= 4;
+
+  if (changePct >= 1) score += 3;
+  else if (changePct <= -1) score -= 3;
+  if (gapPct >= 0.75) score += 2;
+  else if (gapPct <= -0.75) score -= 2;
+  if (volumeRatio >= 1.2) score += changePct >= 0 ? 2 : -2;
+
+  return {
+    score: clamp(score, -14, 14),
+    value: `Completed candle ${signed(round(changePct))}% | body ${signed(round(bodyStrength * 100))}% of range | close location ${round(closeLocation * 100)}% | gap ${signed(round(gapPct))}%${volumeRatio === null ? '' : ` | volume ${round(volumeRatio)}x`}`
+  };
 }
 
 function trendScore(latest, candles) {
@@ -215,19 +282,40 @@ function newsScore(newsAnalysis) {
   if (!newsAnalysis) {
     return {
       score: 0,
-      value: 'No AI news analysis yet',
+      rawScore: 0,
+      reliabilityPercentage: 0,
+      value: 'No AI news analysis yet | auto-trade impact 0',
       forceBias: 'neutral'
     };
   }
-  const verdict = newsAnalysis.verdict || 'neutral';
-  const confidence = Number.isFinite(newsAnalysis.confidencePercentage) ? newsAnalysis.confidencePercentage : 0;
+  const verdict = String(newsAnalysis.verdict || 'neutral').toLowerCase();
+  const confidence = clamp(Number(newsAnalysis.confidencePercentage) || 0, 0, 100);
   const headlineCount = newsAnalysis.headlineCount ?? newsAnalysis.items?.length ?? 0;
+  const parsedRawScore = clamp(Number(newsAnalysis.score) || 0, -18, 18);
+  const rawScore = verdict === 'positive'
+    ? Math.abs(parsedRawScore)
+    : verdict === 'negative'
+      ? -Math.abs(parsedRawScore)
+      : 0;
+  const confidenceWeight = confidence / 100;
+  const coverageWeight = headlineCount >= 4 ? 1 : headlineCount >= 2 ? 0.85 : headlineCount === 1 ? 0.65 : 0;
+  const freshnessWeight = newsAnalysis.selectedPeriod === 'web-search' ? 0.75 : 1;
+  const engineWeight = newsAnalysis.engine?.usedLmStudio || newsAnalysis.mode === 'lmstudio'
+    ? 1
+    : newsAnalysis.mode === 'local-fallback'
+      ? 0.7
+      : 0.6;
+  const reliability = confidenceWeight * coverageWeight * freshnessWeight * engineWeight;
+  const score = clamp(rawScore * reliability, -14, 14);
   const range = newsAnalysis.dateRange?.from && newsAnalysis.dateRange?.to
     ? `${newsAnalysis.dateRange.from} to ${newsAnalysis.dateRange.to}`
     : newsAnalysis.today || 'latest window';
-  const value = `${capitalize(verdict)} news | ${confidence}% AI confidence | ${headlineCount} headline${headlineCount === 1 ? '' : 's'} | ${range}`;
+  const engine = newsAnalysis.engine?.label || (newsAnalysis.mode === 'lmstudio' ? 'LM Studio' : 'Local news rules');
+  const value = `${capitalize(verdict)} news | reliability-adjusted ${signed(round(score))} from raw ${signed(round(rawScore))} | ${confidence}% confidence | ${headlineCount} headline${headlineCount === 1 ? '' : 's'} | ${engine} | ${range}`;
   return {
-    score: Number.isFinite(newsAnalysis.score) ? newsAnalysis.score : 0,
+    score,
+    rawScore,
+    reliabilityPercentage: round(reliability * 100),
     value,
     forceBias: verdict === 'positive' ? 'bullish' : verdict === 'negative' ? 'bearish' : 'neutral'
   };
@@ -247,20 +335,31 @@ function adjustedThresholds(calibration, latest) {
 function shouldTakeProfitOrStop(latest, position, score, policy = {}) {
   const pnlPct = ((latest.close - position.averagePrice) / position.averagePrice) * 100;
   const takeProfitPct = Number.isFinite(policy.takeProfitPct) ? policy.takeProfitPct : 7;
+  const stopLossPct = Number.isFinite(policy.stopLossPct) ? policy.stopLossPct : 4.5;
   if (pnlPct >= takeProfitPct && score < 25) return true;
-  if (pnlPct <= -4.5) return true;
+  if (pnlPct <= -stopLossPct) return true;
   return false;
 }
 
-function addParameter(parameters, item, name) {
-  const score = Number.isFinite(item.score) ? item.score : 0;
+function addParameter(parameters, item, name, weight = 1) {
+  const baseScore = Number.isFinite(item.score) ? item.score : 0;
+  const score = baseScore * weight;
   parameters.push({
     name,
-    value: item.value,
+    value: weight === 1 ? item.value : `${item.value} | weight ${round(weight)}x`,
     score: round(score),
+    baseScore: round(baseScore),
+    weight: round(weight),
     bias: item.forceBias || (score > 2 ? 'bullish' : score < -2 ? 'bearish' : 'neutral')
   });
   return score;
+}
+
+export function normalizeParameterWeights(input = {}) {
+  return Object.fromEntries(Object.entries(defaultParameterWeights).map(([key, fallback]) => [
+    key,
+    round(clamp(Number(input?.[key]) || fallback, 0.5, 1.5))
+  ]));
 }
 
 function buildReasons(latest, signals, parameters, position) {
@@ -308,4 +407,8 @@ function combinedConfidencePercentage(score) {
 function capitalize(value) {
   const text = String(value || '');
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function signed(value) {
+  return `${value >= 0 ? '+' : ''}${value}`;
 }

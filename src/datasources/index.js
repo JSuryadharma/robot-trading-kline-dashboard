@@ -2,11 +2,11 @@ import { fetchTradingViewKlines } from './tradingView.js';
 import { fetchYFinanceKlines } from './yfinance.js';
 import { generateSampleKlines } from './sample.js';
 
-export async function fetchKlines({ symbol, yfSymbol, interval, from, to }) {
+export async function fetchKlines({ symbol, yfSymbol, interval, from, to, countBack }) {
   const attempts = [];
 
   try {
-    const result = await fetchTradingViewKlines({ symbol, interval, from, to });
+    const result = await fetchTradingViewKlines({ symbol, interval, from, to, countBack });
     return {
       ...result,
       attempts: [{ source: 'tradingview', ok: true }]
